@@ -50,7 +50,7 @@ const VALID_CREDENTIALS = JSON.stringify({ claudeAiOauth: { accessToken: 'tok', 
 test('emailMismatch compares case-insensitively and only when both sides are known', () => {
   assert.equal(emailMismatch({ name: 'P', email: 'A@b.c' }, { email: 'a@B.c' }), undefined);
   assert.equal(emailMismatch({ name: 'P' }, { email: 'x@y.z' }), undefined);
-  assert.match(emailMismatch({ name: 'P', email: 'a@b.c' }, { email: 'x@y.z' }) ?? '', /x@y.z.*«P».*a@b.c/);
+  assert.match(emailMismatch({ name: 'P', email: 'a@b.c' }, { email: 'x@y.z' }) ?? '', /x@y.z.*"P".*a@b.c/);
 });
 
 test('readAccountSnapshot fetches live usage once and shares it with other windows through the state file', async () => {
@@ -70,7 +70,7 @@ test('readAccountSnapshot fetches live usage once and shares it with other windo
 
     const second = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, deps);
     assert.equal(second.usage?.source, 'live');
-    assert.equal(second.usageNote, 'dado recente');
+    assert.equal(second.usageNote, 'data is recent');
     assert.equal(deps.calls, 1);
 
     const manual = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, { ...deps, now: () => new Date(NOW.getTime() + 90_000) }, true);
@@ -91,7 +91,7 @@ test('readAccountSnapshot prefers the Claude Code cache when it is fresh and nev
     await fs.writeFile(paths.credentialsFile, VALID_CREDENTIALS);
     const snapshot = await readAccountSnapshot({ name: 'Pessoal', email: 'pessoal@example.com' }, paths, {}, deps);
     assert.equal(snapshot.usage?.source, 'cache');
-    assert.equal(snapshot.usageNote, 'consultas ao vivo desativadas');
+    assert.equal(snapshot.usageNote, 'live usage disabled');
     assert.match(snapshot.mismatch ?? '', /x@y.z/);
     assert.equal(deps.calls, 0);
   } finally {
@@ -111,19 +111,19 @@ test('readAccountSnapshot falls back to the cache, records holds and marks renew
     const expired = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, deps);
     assert.equal(expired.credential.kind, 'expired');
     assert.equal(expired.usage?.source, 'cache');
-    assert.equal(expired.usageNote, 'sem token válido');
+    assert.equal(expired.usageNote, 'no valid token');
 
     await fs.writeFile(paths.credentialsFile, VALID_CREDENTIALS);
     const rejected = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, deps);
     assert.equal(rejected.credential.kind, 'ok');
     assert.equal(rejected.usage?.source, 'cache');
-    assert.equal(rejected.usageError, 'token recusado (401)');
+    assert.equal(rejected.usageError, 'token rejected (401)');
     const shared = await readSharedState(sharedStatePath(deps.sharedDir, dir));
     assert.equal(shared?.holdReason, 'unauthorized');
 
     const held = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, deps);
     assert.equal(held.usageError, undefined);
-    assert.match(held.usageNote ?? '', /token recusado; aguardando novo login/);
+    assert.match(held.usageNote ?? '', /token rejected, waiting for a new sign-in/);
 
     const renewed = await readAccountSnapshot({ name: 'Pessoal' }, paths, {}, { ...deps, liveQueries: false, now: () => new Date('2026-10-22T00:00:00Z') });
     assert.equal(renewed.usage?.session?.renewed, true);

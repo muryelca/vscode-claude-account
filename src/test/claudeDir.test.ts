@@ -72,7 +72,7 @@ test('prepareProfileDir creates junctions except backups, seeds .claude.json, sy
     assert.deepEqual([...first.junctionsCreated].sort(), ['projects', 'skills']);
     assert.equal(first.seeded, true);
     assert.deepEqual(first.synced, ['settings.json (base->profile)', 'CLAUDE.md (base->profile)']);
-    assert.deepEqual(first.warnings, ['config.json: nome não permitido na sincronização; ignorado', '.credentials.json: nome não permitido na sincronização; ignorado']);
+    assert.deepEqual(first.warnings, ['config.json: name not allowed for sync, skipped', '.credentials.json: name not allowed for sync, skipped']);
 
     assert.equal(await fs.readFile(path.join(profileDir, 'projects', 'slug', 'session.jsonl'), 'utf8'), '{}');
     assert.equal((await fs.lstat(path.join(profileDir, 'projects'))).isSymbolicLink(), true);
@@ -103,7 +103,7 @@ test('prepareProfileDir keeps a real non-empty folder, replaces an empty one and
     const report = await prepareProfileDir({ baseDir, baseConfigFile, profileDir, syncFiles: [], log: () => undefined });
     assert.deepEqual(report.junctionsCreated, ['skills']);
     assert.equal(report.warnings.length, 1);
-    assert.match(report.warnings[0], /^projects: é uma pasta real com conteúdo/);
+    assert.match(report.warnings[0], /^projects: a real folder with content exists/);
     assert.equal((await fs.lstat(path.join(profileDir, 'projects'))).isDirectory(), true);
 
     const same = await prepareProfileDir({ baseDir, baseConfigFile, profileDir: baseDir, syncFiles: [], log: () => undefined });
@@ -122,7 +122,7 @@ test('prepareProfileDir yields when another window holds a fresh lock', async ()
     await fs.mkdir(path.join(profileDir, '.claude-account-switcher.lock'), { recursive: true });
     const blocked = await prepareProfileDir({ baseDir, baseConfigFile, profileDir, syncFiles: [], log: () => undefined });
     assert.equal(blocked.skipped, true);
-    assert.match(blocked.warnings[0], /outra janela/);
+    assert.match(blocked.warnings[0], /another window/);
     const stale = await prepareProfileDir({ baseDir, baseConfigFile, profileDir, syncFiles: [], now: () => Date.now() + 60_000, log: () => undefined });
     assert.equal(stale.skipped, false);
     assert.deepEqual([...stale.junctionsCreated].sort(), ['projects', 'skills']);

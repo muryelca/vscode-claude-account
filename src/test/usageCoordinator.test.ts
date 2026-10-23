@@ -27,21 +27,21 @@ function decide(overrides: Partial<Parameters<typeof decideLiveFetch>[0]> = {}) 
 
 test('decideLiveFetch only calls the API when live queries are on, the token is valid and data is old', () => {
   assert.equal(decide().fetch, true);
-  assert.equal(decide({ liveEnabled: false }).reason, 'consultas ao vivo desativadas');
-  assert.equal(decide({ credentialOk: false }).reason, 'sem token válido');
-  assert.equal(decide({ newestKnownFetchedAtMs: NOW - 60_000 }).reason, 'dado recente');
+  assert.equal(decide({ liveEnabled: false }).reason, 'live usage disabled');
+  assert.equal(decide({ credentialOk: false }).reason, 'no valid token');
+  assert.equal(decide({ newestKnownFetchedAtMs: NOW - 60_000 }).reason, 'data is recent');
   assert.equal(decide({ newestKnownFetchedAtMs: NOW - FIVE_MIN - 1 }).fetch, true);
-  assert.equal(decide({ state: { lastAttemptMs: NOW - 10_000 } }).reason, 'tentativa recente');
+  assert.equal(decide({ state: { lastAttemptMs: NOW - 10_000 } }).reason, 'recent attempt');
 });
 
 test('decideLiveFetch honours holds and lets a manual request through at most once a minute', () => {
-  assert.match(decide({ state: { holdUntilMs: NOW + 1000, holdReason: 'rate-limited' } }).reason, /em espera/);
+  assert.match(decide({ state: { holdUntilMs: NOW + 1000, holdReason: 'rate-limited' } }).reason, /on hold/);
   assert.equal(decide({ state: { holdUntilMs: NOW - 1, holdReason: 'rate-limited' } }).fetch, true);
   const unauthorized = { holdUntilMs: NOW + MAX_HOLD_MS, holdReason: 'unauthorized', holdCredentialsMtimeMs: 10 };
-  assert.match(decide({ state: unauthorized, credentialsMtimeMs: 10 }).reason, /novo login/);
+  assert.match(decide({ state: unauthorized, credentialsMtimeMs: 10 }).reason, /new sign-in/);
   assert.equal(decide({ state: unauthorized, credentialsMtimeMs: 11 }).fetch, true);
   assert.equal(decide({ manual: true, newestKnownFetchedAtMs: NOW - 1000 }).fetch, true);
-  assert.equal(decide({ manual: true, state: { lastAttemptMs: NOW - MANUAL_MIN_INTERVAL_MS + 1 } }).reason, 'consulta manual recente');
+  assert.equal(decide({ manual: true, state: { lastAttemptMs: NOW - MANUAL_MIN_INTERVAL_MS + 1 } }).reason, 'recent manual request');
 });
 
 test('holdFor maps failure categories to bounded holds', () => {

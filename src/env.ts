@@ -18,10 +18,10 @@ export function captureInheritedEnv(
   const configDir = env[CONFIG_DIR_VAR] || undefined;
   const secureStorageDir = env[SECURE_STORAGE_DIR_VAR];
   if (env[SENTINEL_VAR]) {
-    return { discardedReason: 'ambiente herdado de um terminal desta extensão' };
+    return { discardedReason: 'environment inherited from a terminal created by this extension' };
   }
   if (configDir && knownProfileDirs.some((dir) => samePath(dir, configDir, platform))) {
-    return { discardedReason: `CLAUDE_CONFIG_DIR herdada aponta para um perfil desta extensão (${configDir})` };
+    return { discardedReason: `inherited CLAUDE_CONFIG_DIR points to a profile of this extension (${configDir})` };
   }
   return { configDir, secureStorageDir };
 }
@@ -55,7 +55,7 @@ export function applyToProcessEnv(vars: EnvVars, env: NodeJS.ProcessEnv = proces
     if (value === undefined) {
       if (env[name] !== undefined) {
         delete env[name];
-        changes.push(`${name} removida`);
+        changes.push(`${name} removed`);
       }
       continue;
     }

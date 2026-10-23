@@ -85,7 +85,7 @@ export function stateFromText(text: string | undefined, source: CredentialSource
   }
   const parsed = parseCredentialsText(text);
   if (!parsed.ok) {
-    return { kind: 'error', source, message: 'conteúdo das credenciais não é JSON' };
+    return { kind: 'error', source, message: 'credentials are not valid JSON' };
   }
   if (!parsed.credentials) {
     return { kind: 'missing', source };
@@ -99,7 +99,7 @@ export function stateFromText(text: string | undefined, source: CredentialSource
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function readCredentialsFile(file: string, now: number = Date.now(), sleep: (ms: number) => Promise<void> = wait): Promise<CredentialState> {
-  let lastError = 'leitura falhou';
+  let lastError = 'read failed';
   for (let attempt = 0; attempt < READ_ATTEMPTS; attempt += 1) {
     if (attempt > 0) {
       await sleep(100 * attempt);
@@ -108,7 +108,7 @@ export async function readCredentialsFile(file: string, now: number = Date.now()
     try {
       text = await fs.readFile(file, 'utf8');
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? 'desconhecido';
+      const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
       if (code === 'ENOENT' || code === 'ENOTDIR') {
         if (attempt === 0) {
           continue;
@@ -116,10 +116,10 @@ export async function readCredentialsFile(file: string, now: number = Date.now()
         return { kind: 'missing', source: 'file' };
       }
       if (TRANSIENT_CODES.has(code)) {
-        lastError = `arquivo ocupado (${code})`;
+        lastError = `file busy (${code})`;
         continue;
       }
-      return { kind: 'error', source: 'file', message: `falha ao ler as credenciais (${code})` };
+      return { kind: 'error', source: 'file', message: `failed to read credentials (${code})` };
     }
     const state = stateFromText(text, 'file', now);
     if (state.kind === 'error') {

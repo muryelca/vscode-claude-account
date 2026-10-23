@@ -14,12 +14,15 @@ export interface StubEvents {
   readonly commands: Map<string, (...args: unknown[]) => unknown>;
   readonly quickPickAnswers: Array<(items: Array<{ label: string }>) => unknown>;
   readonly messageAnswers: string[];
+  readonly inputBoxAnswers: Array<string | undefined>;
+  readonly inputBoxPrompts: string[];
   terminals: unknown[];
 }
 
 export interface StubContext {
   readonly workspaceState: { get<T>(key: string): T | undefined; update(key: string, value: unknown): Promise<void>; store: Map<string, unknown> };
   readonly environmentVariableCollection: { description: string; replace(name: string, value: string): void; delete(name: string): void; clear(): void; values: Map<string, string> };
+  readonly globalState: { get<T>(key: string): T | undefined; update(key: string, value: unknown): Promise<void>; store: Map<string, unknown> };
   readonly globalStorageUri: { fsPath: string };
   readonly subscriptions: Array<{ dispose(): void }>;
 }
@@ -46,6 +49,8 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
     commands: new Map(),
     quickPickAnswers: [],
     messageAnswers: [],
+    inputBoxAnswers: [],
+    inputBoxPrompts: [],
     terminals: [],
   };
   const config = configuration;
@@ -54,11 +59,18 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
       const value = config[`${section}.${key}`];
       return value === undefined ? fallback : value;
     },
-    inspect: () => undefined,
+    inspect: (key: string) => ({ globalValue: config[`${section}.${key}`] }),
+    update: async (key: string, value: unknown) => {
+      config[`${section}.${key}`] = value;
+      for (const listener of events.configChangeListeners) {
+        listener({ affectsConfiguration: (name: string) => name === section || name.startsWith(`${section}.`) });
+      }
+    },
   });
   const stub = {
     StatusBarAlignment: { Left: 1, Right: 2 },
     ProgressLocation: { Notification: 15 },
+    ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     QuickPickItemKind: { Separator: -1, Default: 0 },
     MarkdownString,
     ThemeColor,
@@ -98,6 +110,14 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
         events.errors.push(message);
         return undefined;
       },
+      showInputBox: async (options: { prompt: string; value?: string; validateInput?: (value: string) => string | undefined }) => {
+        events.inputBoxPrompts.push(options.prompt);
+        const answer = events.inputBoxAnswers.length ? events.inputBoxAnswers.shift() : options.value;
+        if (answer !== undefined && options.validateInput?.(answer)) {
+          throw new Error(`invalid input: ${options.validateInput(answer)}`);
+        }
+        return answer;
+      },
       showQuickPick: async (items: Array<{ label: string }>) => {
         const answer = events.quickPickAnswers.shift();
         return answer ? answer(items) : undefined;
@@ -112,7 +132,7 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
       getConfiguration,
       onDidChangeConfiguration: (listener: Listener<{ affectsConfiguration: (section: string) => boolean }>) => {
         events.configChangeListeners.push(listener);
-        return { dispose: () => undefined };
+        return { dispose: () => events.configChangeListeners.splice(events.configChangeListeners.indexOf(listener), 1) };
       },
     },
     commands: {
@@ -136,6 +156,7 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
     return originalLoad.call(this, request, parent, isMain);
   };
   const store = new Map<string, unknown>();
+  const globalStore = new Map<string, unknown>();
   const values = new Map<string, string>();
   const context: StubContext = {
     workspaceState: {
@@ -163,6 +184,17 @@ export function installVscodeStub(configuration: Record<string, unknown>, global
       clear: () => {
         events.collectionCalls.push('clear');
         values.clear();
+      },
+    },
+    globalState: {
+      store: globalStore,
+      get: <T>(key: string) => globalStore.get(key) as T | undefined,
+      update: async (key: string, value: unknown) => {
+        if (value === undefined) {
+          globalStore.delete(key);
+        } else {
+          globalStore.set(key, value);
+        }
       },
     },
     globalStorageUri: { fsPath: globalStoragePath },

@@ -37,7 +37,7 @@ export function emailMismatch(profile: Profile, account: AccountInfo | undefined
   if (profile.email.toLowerCase() === account.email.toLowerCase()) {
     return undefined;
   }
-  return `Login neste diretório é ${account.email}, mas o perfil «${profile.name}» esperava ${profile.email}`;
+  return `Signed in here as ${account.email}, but profile "${profile.name}" expects ${profile.email}`;
 }
 
 function newest(...candidates: Array<UsageSnapshot | undefined>): UsageSnapshot | undefined {
@@ -65,12 +65,12 @@ async function mtimeOrUndefined(file: string): Promise<number | undefined> {
 async function readCredentials(paths: ProfilePaths, envVars: EnvVars, useCredentialManager: boolean, deps: MonitorDeps, nowMs: number): Promise<CredentialState> {
   if (useCredentialManager) {
     const service = credentialManagerService(envVars[CONFIG_DIR_VAR], envVars[SECURE_STORAGE_DIR_VAR]);
-    deps.log(`lendo credenciais no Credential Manager (${service})`);
+    deps.log(`reading credentials from Credential Manager (${service})`);
     const fromManager = await readCredentialManager(service, deps.runPowerShell, nowMs);
     if (fromManager.kind !== 'missing') {
       return fromManager;
     }
-    deps.log('Credential Manager sem entrada; tentando o arquivo');
+    deps.log('no Credential Manager entry, trying the credentials file');
   }
   return readCredentialsFile(paths.credentialsFile, nowMs);
 }
@@ -86,11 +86,11 @@ export async function readAccountSnapshot(
   const nowMs = now.getTime();
   const config = await readClaudeConfig(paths.configFile);
   if (config.error) {
-    deps.log(`aviso ao ler ${paths.configFile}: ${config.error}`);
+    deps.log(`warning while reading ${paths.configFile}: ${config.error}`);
   }
   const useCredentialManager = deps.platform === 'win32' && (config.usesCredentialManager || deps.forceCredentialManager === true);
   const credential = await readCredentials(paths, envVars, useCredentialManager, deps, nowMs);
-  deps.log(`credenciais via ${credential.source}: ${credential.kind}${credential.kind === 'error' ? ` (${credential.message})` : ''}`);
+  deps.log(`credentials via ${credential.source}: ${credential.kind}${credential.kind === 'error' ? ` (${credential.message})` : ''}`);
   const loggedIn = credential.kind === 'ok' || credential.kind === 'expired' || config.account !== undefined;
 
   const stateFile = sharedStatePath(deps.sharedDir, paths.configDir);
@@ -113,22 +113,22 @@ export async function readAccountSnapshot(
   });
   if (!decision.fetch) {
     usageNote = decision.reason;
-    deps.log(`sem consulta ao vivo: ${decision.reason}`);
+    deps.log(`no live request: ${decision.reason}`);
   } else if (credential.kind === 'ok') {
     const lock = lockPath(deps.sharedDir, paths.configDir);
     if (!(await acquireLock(lock, nowMs))) {
-      usageNote = 'outra janela está consultando o uso';
+      usageNote = 'another window is fetching usage';
       deps.log(usageNote);
     } else {
       try {
-        deps.log(`consultando o uso ao vivo (${decision.reason})`);
+        deps.log(`fetching live usage (${decision.reason})`);
         const result = await fetchUsage(credential.credentials.accessToken, deps.fetchImpl);
         if (result.ok) {
           const live = parseUsage(result.raw, now, 'live');
           if (live) {
             usage = live;
             await writeSharedState(stateFile, { fetchedAtMs: nowMs, raw: result.raw, lastAttemptMs: nowMs });
-            deps.log(`uso ao vivo: sessão ${live.session?.percent ?? '?'}%, semana ${live.weekly?.percent ?? '?'}%`);
+            deps.log(`live usage: session ${live.session?.percent ?? '?'}%, week ${live.weekly?.percent ?? '?'}%`);
           } else {
             usageError = usageFailureLabel('bad-response');
             await writeSharedState(stateFile, { ...shared, lastAttemptMs: nowMs, ...holdFor('bad-response', undefined, nowMs, credentialsMtimeMs) });
@@ -137,10 +137,10 @@ export async function readAccountSnapshot(
         } else {
           usageError = usageFailureLabel(result.category, result.status);
           await writeSharedState(stateFile, { ...shared, lastAttemptMs: nowMs, ...holdFor(result.category, result.retryAfterMs, nowMs, credentialsMtimeMs) });
-          deps.log(`consulta de uso falhou: ${usageError}`);
+          deps.log(`usage request failed: ${usageError}`);
         }
       } catch (error) {
-        usageError = `falha inesperada ao consultar o uso (${(error as Error).name})`;
+        usageError = `unexpected error while fetching usage (${(error as Error).name})`;
         deps.log(usageError);
       } finally {
         await releaseLock(lock);

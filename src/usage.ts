@@ -28,8 +28,8 @@ export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 export const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 export const USAGE_TIMEOUT_MS = 5_000;
 
-export const SESSION_LABEL = 'Sessão (5h)';
-export const WEEKLY_LABEL = 'Semana (7d)';
+export const SESSION_LABEL = 'Session (5h)';
+export const WEEKLY_LABEL = 'Week (7d)';
 
 const TOKEN_PATTERN = /^[\x21-\x7e]+$/;
 
@@ -66,27 +66,27 @@ function scopedLabel(limit: Record<string, unknown>): string {
   const scope = asRecord(limit.scope);
   const model = scope ? asRecord(scope.model) : undefined;
   const name = model ? asString(model.display_name) ?? asString(model.id) : undefined;
-  return `${name ?? 'Modelo'} (7d)`;
+  return `${name ?? 'Model'} (7d)`;
 }
 
 export function usageFailureLabel(category: UsageFailureCategory, status?: number): string {
   switch (category) {
     case 'invalid-token':
-      return 'token em formato inválido';
+      return 'malformed token';
     case 'timeout':
-      return 'tempo esgotado ao consultar o uso';
+      return 'usage request timed out';
     case 'network':
-      return 'sem conexão com a API do Claude';
+      return 'cannot reach the Claude API';
     case 'unauthorized':
-      return `token recusado (${status ?? 401})`;
+      return `token rejected (${status ?? 401})`;
     case 'rate-limited':
-      return 'limite de consultas de uso atingido (429)';
+      return 'usage rate limit reached (429)';
     case 'server':
-      return `API do Claude respondeu ${status ?? 'erro'}`;
+      return `Claude API returned ${status ?? 'an error'}`;
     case 'bad-response':
-      return 'resposta de uso em formato inesperado';
+      return 'unexpected usage response';
     default:
-      return 'falha ao consultar o uso';
+      return 'usage request failed';
   }
 }
 

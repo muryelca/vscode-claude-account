@@ -53,7 +53,7 @@ test('readCredentialManager reassembles chunked entries from the manifest', asyn
   const inconsistent = { ...entries, [`${service}#m/claude-code-user`]: Buffer.from(JSON.stringify({ n: 3, l: payload.length + 1 }), 'utf8') };
   const broken = await readCredentialManager(service, runnerFor(inconsistent));
   assert.equal(broken.kind, 'error');
-  assert.match(broken.kind === 'error' ? broken.message : '', /inconsistentes/);
+  assert.match(broken.kind === 'error' ? broken.message : '', /inconsistent/);
 
   const incomplete = { ...entries };
   delete incomplete[`${service}#2/claude-code-user`];
@@ -65,8 +65,8 @@ test('readCredentialManager reports missing and PowerShell failures without leak
   const missing = await readCredentialManager('x', runnerFor({}));
   assert.equal(missing.kind, 'missing');
   const failed = await readCredentialManager('x', async () => {
-    throw new Error('código 1, powershell not found');
+    throw new Error('code 1, powershell not found');
   });
   assert.equal(failed.kind, 'error');
-  assert.equal(failed.kind === 'error' ? failed.message : '', 'Credential Manager: código 1, powershell not found');
+  assert.equal(failed.kind === 'error' ? failed.message : '', 'Credential Manager: code 1, powershell not found');
 });

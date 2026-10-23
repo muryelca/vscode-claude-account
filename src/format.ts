@@ -24,6 +24,7 @@ export interface StatusView {
 
 export const STALE_AFTER_MS = 60 * 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const LOCALE = 'en-US';
 const PLAN_NAMES: Readonly<Record<string, string>> = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 
 export function escapeMarkdown(text: string): string {
@@ -50,43 +51,45 @@ function sameLocalDay(a: Date, b: Date): boolean {
 }
 
 function timeOf(date: Date): string {
-  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(date);
+  return new Intl.DateTimeFormat(LOCALE, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+function dayOf(date: Date): string {
+  return new Intl.DateTimeFormat(LOCALE, { month: 'short', day: 'numeric' }).format(date);
 }
 
 export function formatResetsAt(resetsAt: Date, now: Date): string {
   const time = timeOf(resetsAt);
   if (resetsAt.getTime() <= now.getTime()) {
-    return sameLocalDay(resetsAt, now) ? `renovou hoje às ${time}` : `renovou em ${new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(resetsAt)} às ${time}`;
+    return sameLocalDay(resetsAt, now) ? `reset today at ${time}` : `reset on ${dayOf(resetsAt)} at ${time}`;
   }
   if (sameLocalDay(resetsAt, now)) {
-    return `renova hoje às ${time}`;
+    return `resets today at ${time}`;
   }
-  const tomorrow = new Date(now.getTime() + DAY_MS);
-  if (sameLocalDay(resetsAt, tomorrow)) {
-    return `renova amanhã às ${time}`;
+  if (sameLocalDay(resetsAt, new Date(now.getTime() + DAY_MS))) {
+    return `resets tomorrow at ${time}`;
   }
   if (resetsAt.getTime() - now.getTime() < 6 * DAY_MS) {
-    const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(resetsAt).replace('.', '');
-    return `renova ${weekday} às ${time}`;
+    const weekday = new Intl.DateTimeFormat(LOCALE, { weekday: 'short' }).format(resetsAt);
+    return `resets ${weekday} at ${time}`;
   }
-  const day = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(resetsAt);
-  return `renova ${day} às ${time}`;
+  return `resets ${dayOf(resetsAt)} at ${time}`;
 }
 
 export function formatAge(from: Date, now: Date): string {
   const seconds = Math.max(0, Math.round((now.getTime() - from.getTime()) / 1000));
   if (seconds < 60) {
-    return 'agora';
+    return 'just now';
   }
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) {
-    return `há ${minutes} min`;
+    return `${minutes} min ago`;
   }
   const hours = Math.round(minutes / 60);
   if (hours < 24) {
-    return `há ${hours} h`;
+    return `${hours} h ago`;
   }
-  return `há ${Math.round(hours / 24)} d`;
+  return `${Math.round(hours / 24)} d ago`;
 }
 
 export function planLabel(subscriptionType: string | undefined, rateLimitTier: string | undefined): string | undefined {
@@ -126,15 +129,15 @@ export function highestBucket(usage: UsageSnapshot | undefined): UsageBucket | u
 
 export function credentialLabel(view: StatusView): string | undefined {
   if (!view.loggedIn) {
-    return 'sem login';
+    return 'signed out';
   }
   switch (view.credential?.kind) {
     case 'expired':
-      return 'sessão expirada';
+      return 'session expired';
     case 'error':
-      return 'erro ao ler credenciais';
+      return 'credentials unreadable';
     case 'missing':
-      return 'credenciais não lidas';
+      return 'credentials not found';
     default:
       return undefined;
   }
@@ -177,7 +180,7 @@ export function statusBarText(view: StatusView): string {
     parts.push('$(alert)');
   }
   if (view.pendingReload) {
-    parts.push('$(debug-restart) recarregar');
+    parts.push('$(debug-restart) reload');
   }
   return parts.join('  ');
 }
@@ -191,8 +194,22 @@ export function statusSeverity(view: StatusView): Severity {
 
 function bucketLine(bucket: UsageBucket, now: Date): string {
   const reset = bucket.resetsAt ? ` · ${formatResetsAt(bucket.resetsAt, now)}` : '';
-  const renewed = bucket.renewed ? ' (janela renovada, sem dado novo)' : '';
+  const renewed = bucket.renewed ? ' (window reset, no new data yet)' : '';
   return `${escapeMarkdown(bucket.label)}: **${formatPercent(bucket.percent)}**${reset}${renewed}`;
+}
+
+function credentialHint(view: StatusView): string {
+  if (!view.loggedIn) {
+    return `Open Claude Code in this window and sign in with ${escapeMarkdown(view.profile.email ?? "this profile's account")}.`;
+  }
+  switch (view.credential?.kind) {
+    case 'expired':
+      return 'Claude Code renews the session the next time you use a chat in this window.';
+    case 'error':
+      return escapeMarkdown(view.credential.message);
+    default:
+      return 'The account is registered but no token was found, so usage comes from the cache only.';
+  }
 }
 
 export function tooltipMarkdown(view: StatusView): string {
@@ -217,50 +234,43 @@ export function tooltipMarkdown(view: StatusView): string {
     lines.push('');
   }
   if (view.loading) {
-    lines.push('Consultando o uso...');
+    lines.push('Fetching usage...');
   } else if (view.usage) {
     for (const bucket of allBuckets(view.usage)) {
       lines.push(bucketLine(bucket, view.now));
       lines.push('');
     }
     if (view.usage.extraUsageEnabled !== undefined) {
-      lines.push(`Créditos extras: ${view.usage.extraUsageEnabled ? 'ativados' : 'desativados'}`);
+      lines.push(`Extra usage: ${view.usage.extraUsageEnabled ? 'on' : 'off'}`);
       lines.push('');
     }
-    const origin = view.usage.source === 'live' ? 'Uso consultado ao vivo' : 'Uso do cache do Claude Code';
-    const age = view.usage.fetchedAt ? formatAge(view.usage.fetchedAt, view.now) : 'idade desconhecida';
-    const stale = isStale(view.usage, view.now) ? ' $(history) dado antigo' : '';
+    const origin = view.usage.source === 'live' ? 'Live usage' : 'Usage from the Claude Code cache';
+    const age = view.usage.fetchedAt ? formatAge(view.usage.fetchedAt, view.now) : 'age unknown';
+    const stale = isStale(view.usage, view.now) ? ' $(history) stale' : '';
     lines.push(`${origin}, ${age}${stale}`);
   } else {
-    lines.push('Uso indisponível');
+    lines.push('Usage unavailable');
   }
   const credentialNote = credentialLabel(view);
   if (credentialNote) {
-    const hint = !view.loggedIn
-      ? `Abra o Claude Code nesta janela e entre com ${escapeMarkdown(view.profile.email ?? 'a conta deste perfil')}.`
-      : view.credential?.kind === 'expired'
-        ? 'O Claude Code renova a sessão sozinho quando você usa um chat nesta janela.'
-        : view.credential?.kind === 'error'
-          ? escapeMarkdown(view.credential.message)
-          : 'A conta está registrada, mas o token não foi encontrado; o uso vem só do cache.';
     lines.push('');
-    lines.push(`$(warning) ${credentialNote}. ${hint}`);
+    lines.push(`$(warning) ${credentialNote[0].toUpperCase()}${credentialNote.slice(1)}. ${credentialHint(view)}`);
   }
   if (view.usageError) {
     lines.push('');
-    lines.push(`Última consulta falhou: ${escapeMarkdown(view.usageError)}`);
+    lines.push(`Last request failed: ${escapeMarkdown(view.usageError)}`);
   } else if (view.usageNote && view.usage?.source !== 'live') {
     lines.push('');
-    lines.push(`Consulta ao vivo: ${escapeMarkdown(view.usageNote)}`);
+    lines.push(`Live usage: ${escapeMarkdown(view.usageNote)}`);
   }
   if (view.pendingReload) {
     lines.push('');
-    lines.push('$(debug-restart) Recarregue a janela: chats e terminais já abertos continuam na conta anterior até lá.');
+    lines.push('$(debug-restart) Reload the window: open chats and terminals keep the previous account until then.');
   }
   lines.push('');
   lines.push('---');
-  lines.push(`Diretório: \`${view.paths.configDir.replace(/`/g, "'")}\``);
+  lines.push(`Directory: \`${view.paths.configDir.replace(/`/g, "'")}\``);
   lines.push('');
-  lines.push('[Trocar perfil](command:claudeAccount.switch) · [Atualizar uso](command:claudeAccount.refreshUsage) · [Menu](command:claudeAccount.menu)');
+  lines.push('[Switch profile](command:claudeAccount.switch) · [Refresh usage](command:claudeAccount.refreshUsage) · [Menu](command:claudeAccount.menu)');
   return lines.join('\n');
 }

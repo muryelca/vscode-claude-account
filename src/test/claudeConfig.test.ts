@@ -31,8 +31,8 @@ test('parseClaudeConfig drops a cache that belongs to another account and tolera
   assert.equal(foreign.cachedUsage, undefined);
   const broken = parseClaudeConfig('{');
   assert.equal(broken.exists, true);
-  assert.match(broken.error ?? '', /JSON inválido/);
-  assert.equal(parseClaudeConfig('[]').error, 'conteúdo não é um objeto');
+  assert.match(broken.error ?? '', /invalid JSON/);
+  assert.equal(parseClaudeConfig('[]').error, 'content is not an object');
 });
 
 test('readClaudeConfig reports a missing file without throwing', async () => {

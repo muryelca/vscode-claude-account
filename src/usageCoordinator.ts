@@ -50,35 +50,35 @@ export function lockPath(sharedDir: string, configDir: string): string {
 
 export function decideLiveFetch(input: LiveDecisionInput): LiveDecision {
   if (!input.liveEnabled) {
-    return { fetch: false, reason: 'consultas ao vivo desativadas' };
+    return { fetch: false, reason: 'live usage disabled' };
   }
   if (!input.credentialOk) {
-    return { fetch: false, reason: 'sem token válido' };
+    return { fetch: false, reason: 'no valid token' };
   }
   const state = input.state;
   if (state?.holdReason === 'unauthorized') {
     const sameCredentials =
       state.holdCredentialsMtimeMs !== undefined && input.credentialsMtimeMs !== undefined && state.holdCredentialsMtimeMs === input.credentialsMtimeMs;
     if (sameCredentials) {
-      return { fetch: false, reason: 'token recusado; aguardando novo login' };
+      return { fetch: false, reason: 'token rejected, waiting for a new sign-in' };
     }
   } else if (state?.holdUntilMs !== undefined && state.holdUntilMs > input.now) {
-    return { fetch: false, reason: `em espera até ${new Date(state.holdUntilMs).toISOString()} (${state.holdReason ?? 'falha anterior'})` };
+    return { fetch: false, reason: `on hold until ${new Date(state.holdUntilMs).toISOString()} (${state.holdReason ?? 'previous failure'})` };
   }
   const lastAttempt = state?.lastAttemptMs ?? 0;
   if (input.manual) {
     if (input.now - lastAttempt < MANUAL_MIN_INTERVAL_MS) {
-      return { fetch: false, reason: 'consulta manual recente' };
+      return { fetch: false, reason: 'recent manual request' };
     }
-    return { fetch: true, reason: 'pedido manual' };
+    return { fetch: true, reason: 'manual request' };
   }
   if (input.newestKnownFetchedAtMs !== undefined && input.now - input.newestKnownFetchedAtMs < input.minIntervalMs) {
-    return { fetch: false, reason: 'dado recente' };
+    return { fetch: false, reason: 'data is recent' };
   }
   if (input.now - lastAttempt < input.minIntervalMs) {
-    return { fetch: false, reason: 'tentativa recente' };
+    return { fetch: false, reason: 'recent attempt' };
   }
-  return { fetch: true, reason: 'dado antigo ou inexistente' };
+  return { fetch: true, reason: 'data is old or missing' };
 }
 
 export function holdFor(

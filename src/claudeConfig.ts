@@ -29,11 +29,11 @@ export function parseClaudeConfig(text: string): ClaudeConfigInfo {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    return { exists: true, usesCredentialManager: false, error: `JSON inválido: ${(error as Error).message}` };
+    return { exists: true, usesCredentialManager: false, error: `invalid JSON: ${(error as Error).message}` };
   }
   const root = asRecord(parsed);
   if (!root) {
-    return { exists: true, usesCredentialManager: false, error: 'conteúdo não é um objeto' };
+    return { exists: true, usesCredentialManager: false, error: 'content is not an object' };
   }
   const oauth = asRecord(root.oauthAccount);
   const account: AccountInfo | undefined = oauth

@@ -44,7 +44,7 @@ test('applyToProcessEnv sets, deletes and reports only real changes', () => {
   assert.deepEqual(first, [`${CONFIG_DIR_VAR}=new`, `${SECURE_STORAGE_DIR_VAR}=new`]);
   assert.deepEqual(applyToProcessEnv({ [CONFIG_DIR_VAR]: 'new' }, env), []);
   const removed = applyToProcessEnv({ [CONFIG_DIR_VAR]: undefined, [SECURE_STORAGE_DIR_VAR]: undefined }, env);
-  assert.deepEqual(removed, [`${CONFIG_DIR_VAR} removida`, `${SECURE_STORAGE_DIR_VAR} removida`]);
+  assert.deepEqual(removed, [`${CONFIG_DIR_VAR} removed`, `${SECURE_STORAGE_DIR_VAR} removed`]);
   assert.deepEqual(env, { OTHER: '1' });
 });
 
@@ -53,8 +53,8 @@ test('captureInheritedEnv keeps a genuine inherited dir but discards values inje
   assert.deepEqual(captureInheritedEnv({ [CONFIG_DIR_VAR]: 'D:\\cfg' }, ['C:\\p'], 'win32'), { configDir: 'D:\\cfg', secureStorageDir: undefined });
   const fromTerminal = captureInheritedEnv({ [CONFIG_DIR_VAR]: 'C:\\p', [SENTINEL_VAR]: '1' }, [], 'win32');
   assert.equal(fromTerminal.configDir, undefined);
-  assert.match(fromTerminal.discardedReason ?? '', /terminal desta extensão/);
+  assert.match(fromTerminal.discardedReason ?? '', /terminal created by this extension/);
   const knownProfile = captureInheritedEnv({ [CONFIG_DIR_VAR]: 'c:\\P' }, ['C:\\p'], 'win32');
   assert.equal(knownProfile.configDir, undefined);
-  assert.match(knownProfile.discardedReason ?? '', /perfil desta extensão/);
+  assert.match(knownProfile.discardedReason ?? '', /profile of this extension/);
 });

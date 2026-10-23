@@ -9,6 +9,7 @@ import { StatusView } from './format';
 import { AccountSnapshot, readAccountSnapshot } from './monitor';
 import { detectAuthOverrides } from './overrides';
 import { Profile, ProfilePaths, defaultConfigDir, findProfile, normalizeProfiles, profilePaths, resolveActiveProfile } from './profiles';
+import { runAddAccount, runSetupWizard } from './setupWizard';
 import { AccountStatusBar } from './statusBar';
 
 export interface ControllerDeps {
@@ -20,9 +21,14 @@ export interface ControllerDeps {
   readonly now: () => number;
 }
 
+export const EXTENSION_ID = 'muryelca.dj-claude-account-switcher';
 const SECTION = 'claudeAccount';
 const STORED_PROFILE_KEY = 'claudeAccount.profileName';
-const FALLBACK_PROFILE: Profile = { name: 'Padrão' };
+const SETUP_DISMISSED_KEY = 'claudeAccount.setupDismissed';
+const SETUP_PROMPTED_AT_KEY = 'claudeAccount.setupPromptedAt';
+const SETUP_PROMPT_COOLDOWN_MS = 10 * 60_000;
+const FALLBACK_PROFILE: Profile = { name: 'Default' };
+const DEFAULT_PROFILE_NAME = '';
 const DEFAULT_SYNC_FILES = ['settings.json', 'CLAUDE.md', 'skills-lock.json'];
 const FILE_WATCH_INTERVAL_MS = 5000;
 const FOCUS_REFRESH_AFTER_MS = 60_000;
@@ -68,7 +74,7 @@ function readSettings(home: string): Settings {
   const rawDefault = config.get<unknown>('defaultProfile');
   return {
     profiles: normalizeProfiles(config.get<unknown>('profiles'), home),
-    defaultProfile: typeof rawDefault === 'string' && rawDefault.trim() ? rawDefault.trim() : 'Empresa',
+    defaultProfile: typeof rawDefault === 'string' && rawDefault.trim() ? rawDefault.trim() : DEFAULT_PROFILE_NAME,
     refreshIntervalSeconds: clampNumber(config.get<unknown>('usage.refreshIntervalSeconds'), 60, 30, 3600),
     warnAtPercent: clampNumber(config.get<unknown>('usage.warnAtPercent'), 80, 1, 100),
     applyToTerminals: config.get<unknown>('applyToTerminals') !== false,
@@ -99,29 +105,30 @@ export class AccountController implements vscode.Disposable {
   private lastSyncAt = 0;
   private loginHintShown = false;
   private switching = false;
+  private disposed = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly deps: ControllerDeps,
   ) {
-    this.output = vscode.window.createOutputChannel('Claude Account');
+    this.output = vscode.window.createOutputChannel('DJ Claude Account Switcher');
     this.disposables.push(this.output);
     this.settings = readSettings(deps.home);
     const knownDirs = this.settings.profiles.map((profile) => profile.configDir).filter((dir): dir is string => dir !== undefined);
     this.inherited = captureInheritedEnv(deps.env, knownDirs, deps.platform);
     if (this.inherited.discardedReason) {
-      this.log(`ativando; ${this.inherited.discardedReason}; valor descartado`);
+      this.log(`activating; ${this.inherited.discardedReason}, value discarded`);
     } else {
-      this.log(`ativando; CLAUDE_CONFIG_DIR herdada do VS Code: ${this.inherited.configDir ?? '(nenhuma)'}`);
+      this.log(`activating; CLAUDE_CONFIG_DIR inherited from VS Code: ${this.inherited.configDir ?? '(none)'}`);
     }
     const stored = context.workspaceState.get<string>(STORED_PROFILE_KEY);
     const resolution = resolveActiveProfile(this.settings.profiles, stored, this.settings.defaultProfile);
     if (!resolution) {
-      this.log('nenhum perfil configurado em claudeAccount.profiles; usando o diretório padrão');
+      this.log('no profile configured in claudeAccount.profiles, using the default directory');
     } else if (resolution.staleStoredName) {
-      this.log(`perfil guardado «${resolution.staleStoredName}» não existe mais; usando «${resolution.profile.name}» (${resolution.reason})`);
+      this.log(`stored profile "${resolution.staleStoredName}" no longer exists, using "${resolution.profile.name}" (${resolution.reason})`);
     } else {
-      this.log(`perfil desta janela: «${resolution.profile.name}» (${resolution.reason})`);
+      this.log(`profile for this window: "${resolution.profile.name}" (${resolution.reason})`);
     }
     this.paths = profilePaths(FALLBACK_PROFILE, this.inherited, deps.home);
     this.applyProfile(resolution?.profile ?? FALLBACK_PROFILE);
@@ -147,11 +154,94 @@ export class AccountController implements vscode.Disposable {
     this.startTimer();
     void this.checkOverrides()
       .then(() => this.ensureProfileDir(false))
-      .then(() => this.refresh('ativação'))
-      .then(() => this.maybeShowLoginHint());
+      .then(() => this.refresh('activation'))
+      .then(() => (this.maybePromptSetup() ? undefined : this.maybeShowLoginHint()));
+  }
+
+  needsSetup(): boolean {
+    const inspected = vscode.workspace.getConfiguration(SECTION).inspect<unknown>('profiles');
+    return inspected?.globalValue === undefined && this.settings.profiles.length === 0;
+  }
+
+  private maybePromptSetup(): boolean {
+    if (!this.needsSetup() || this.context.globalState.get<boolean>(SETUP_DISMISSED_KEY)) {
+      return false;
+    }
+    const lastPrompt = this.context.globalState.get<number>(SETUP_PROMPTED_AT_KEY) ?? 0;
+    if (this.deps.now() - lastPrompt < SETUP_PROMPT_COOLDOWN_MS) {
+      return true;
+    }
+    void this.context.globalState.update(SETUP_PROMPTED_AT_KEY, this.deps.now());
+    void vscode.window
+      .showInformationMessage(
+        'DJ Claude Account Switcher: set up your Claude accounts to use a different one in each window. Accounts already signed in on this computer are detected for you.',
+        'Set Up Accounts',
+        'Later',
+        "Don't Ask Again",
+      )
+      .then((choice) => {
+        if (choice === 'Set Up Accounts') {
+          void this.runSetup();
+        } else if (choice === "Don't Ask Again") {
+          void this.context.globalState.update(SETUP_DISMISSED_KEY, true);
+        }
+      });
+    return true;
+  }
+
+  async runSetup(): Promise<void> {
+    const result = await runSetupWizard(this.deps.home, this.inherited.configDir, (message) => this.log(message));
+    if (!result) {
+      this.log('setup cancelled');
+      return;
+    }
+    const config = vscode.workspace.getConfiguration(SECTION);
+    await config.update('profiles', result.profiles, vscode.ConfigurationTarget.Global);
+    await config.update('defaultProfile', result.defaultProfile, vscode.ConfigurationTarget.Global);
+    await this.context.globalState.update(SETUP_DISMISSED_KEY, true);
+    this.log(`setup saved: ${result.profiles.map((profile) => profile.name).join(', ')} (default ${result.defaultProfile})`);
+    await this.onSettingsChanged();
+    const firstNew = result.newAccounts[0];
+    const summary = `${result.profiles.length} account(s) set up. This window uses "${this.profile.name}".`;
+    if (!firstNew) {
+      void vscode.window.showInformationMessage(`${summary} Click the account in the status bar to switch.`);
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `${summary} To sign in to "${firstNew}", switch this window to it and sign in in Claude Code.`,
+      `Switch to ${firstNew}`,
+      'Later',
+    );
+    const target = findProfile(this.settings.profiles, firstNew);
+    if (choice === `Switch to ${firstNew}` && target) {
+      await this.switchTo(target);
+    }
+  }
+
+  async addAccount(): Promise<void> {
+    if (this.needsSetup()) {
+      await this.runSetup();
+      return;
+    }
+    const profile = await runAddAccount(this.deps.home, this.settings.profiles);
+    if (!profile) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration(SECTION);
+    const current = config.get<unknown>('profiles');
+    const list = Array.isArray(current) ? [...current, profile] : [profile];
+    await config.update('profiles', list, vscode.ConfigurationTarget.Global);
+    this.settings = readSettings(this.deps.home);
+    this.log(`account "${profile.name}" added`);
+    const target = findProfile(this.settings.profiles, profile.name);
+    const choice = await vscode.window.showInformationMessage(`Account "${profile.name}" added. Switch this window to it and sign in in Claude Code?`, `Switch to ${profile.name}`, 'Later');
+    if (choice === `Switch to ${profile.name}` && target) {
+      await this.switchTo(target);
+    }
   }
 
   dispose(): void {
+    this.disposed = true;
     this.stopTimer();
     this.unwatchFiles();
     for (const disposable of this.disposables.splice(0)) {
@@ -186,11 +276,11 @@ export class AccountController implements vscode.Disposable {
 
   async switchTo(profile: Profile): Promise<void> {
     if (this.switching) {
-      void vscode.window.showInformationMessage('Aguarde a troca de perfil anterior terminar.');
+      void vscode.window.showInformationMessage('Wait for the current profile switch to finish.');
       return;
     }
     if (profile.name === this.profile.name) {
-      void vscode.window.showInformationMessage(`O perfil «${profile.name}» já está ativo nesta janela.`);
+      void vscode.window.showInformationMessage(`Profile "${profile.name}" is already active in this window.`);
       return;
     }
     this.switching = true;
@@ -206,24 +296,24 @@ export class AccountController implements vscode.Disposable {
         this.snapshot = previousSnapshot;
         this.loading = false;
         this.render();
-        void this.refresh('reversão da troca');
+        void this.refresh('switch rollback');
         return;
       }
       await this.context.workspaceState.update(STORED_PROFILE_KEY, profile.name);
       this.pendingReload = true;
       this.loginHintShown = false;
-      this.log(`janela agora usa «${profile.name}» (guardado no workspaceState)`);
-      await this.refresh('troca de perfil');
+      this.log(`this window now uses "${profile.name}" (stored in workspaceState)`);
+      await this.refresh('profile switch');
       this.maybeShowLoginHint();
       const openTerminals = vscode.window.terminals.length > 0;
       void vscode.window
         .showInformationMessage(
-          `Perfil «${profile.name}» ativo nesta janela. Novos chats do Claude Code já usam esta conta. Recarregue a janela para os chats abertos${openTerminals ? ', os terminais já abertos' : ''} e o painel do Claude Code refletirem a troca.`,
-          'Recarregar janela',
-          'Depois',
+          `Profile "${profile.name}" is active in this window. New Claude Code chats already use this account. Reload the window so open chats${openTerminals ? ', open terminals' : ''} and the Claude Code panel pick it up too.`,
+          'Reload Window',
+          'Later',
         )
         .then((choice) => {
-          if (choice === 'Recarregar janela') {
+          if (choice === 'Reload Window') {
             void vscode.commands.executeCommand('workbench.action.reloadWindow');
           }
         });
@@ -242,14 +332,14 @@ export class AccountController implements vscode.Disposable {
     this.paths = profilePaths(profile, this.inherited, this.deps.home);
     this.envVars = envVarsFor(profile, this.inherited, this.deps.platform);
     const changes = applyToProcessEnv(this.envVars, this.deps.env);
-    this.log(`perfil «${profile.name}» aplicado ao extension host${changes.length ? `: ${changes.join(', ')}` : ' (sem mudança de env)'}`);
+    this.log(`profile "${profile.name}" applied to the extension host${changes.length ? `: ${changes.join(', ')}` : ' (environment unchanged)'}`);
     this.applyTerminalEnv();
     this.watchFiles();
   }
 
   private applyTerminalEnv(): void {
     const collection = this.context.environmentVariableCollection;
-    collection.description = 'Perfil do Claude Code escolhido nesta janela (vale para terminais novos)';
+    collection.description = 'Claude Code profile selected for this window (applies to new terminals)';
     if (!this.settings.applyToTerminals) {
       collection.clear();
       return;
@@ -265,10 +355,13 @@ export class AccountController implements vscode.Disposable {
 
   private watchFiles(): void {
     this.unwatchFiles();
+    if (this.disposed) {
+      return;
+    }
     for (const file of [this.paths.credentialsFile, this.paths.configFile]) {
       const listener = () => {
-        this.log(`${path.basename(file)} mudou; atualizando`);
-        void this.refresh('arquivo alterado');
+        this.log(`${path.basename(file)} changed, refreshing`);
+        void this.refresh('file changed');
       };
       fs.watchFile(file, { interval: FILE_WATCH_INTERVAL_MS, persistent: false }, listener);
       this.watched.push({ file, listener });
@@ -283,7 +376,10 @@ export class AccountController implements vscode.Disposable {
 
   private startTimer(): void {
     this.stopTimer();
-    this.timer = setInterval(() => void this.refresh('intervalo'), this.settings.refreshIntervalSeconds * 1000);
+    if (this.disposed) {
+      return;
+    }
+    this.timer = setInterval(() => void this.refresh('interval'), this.settings.refreshIntervalSeconds * 1000);
   }
 
   private stopTimer(): void {
@@ -318,13 +414,13 @@ export class AccountController implements vscode.Disposable {
 
   private async doRefresh(reason: string, manual: boolean, generation: number): Promise<void> {
     if (generation !== this.generation) {
-      this.log(`atualização (${reason}) descartada: o perfil mudou`);
+      this.log(`refresh (${reason}) discarded: the profile changed`);
       return;
     }
     const profile = this.profile;
     const paths = this.paths;
     const envVars = this.envVars;
-    this.log(`atualizando (${reason})`);
+    this.log(`refreshing (${reason})`);
     try {
       const snapshot = await readAccountSnapshot(
         profile,
@@ -344,13 +440,13 @@ export class AccountController implements vscode.Disposable {
         manual,
       );
       if (generation !== this.generation) {
-        this.log('resultado descartado: o perfil mudou durante a consulta');
+        this.log('result discarded: the profile changed during the request');
         return;
       }
       this.snapshot = snapshot;
       this.lastRefreshAt = this.deps.now();
     } catch (error) {
-      this.log(`falha inesperada ao atualizar: ${(error as Error).stack ?? String(error)}`);
+      this.log(`unexpected error while refreshing: ${(error as Error).stack ?? String(error)}`);
     } finally {
       if (generation === this.generation) {
         this.loading = false;
@@ -375,7 +471,7 @@ export class AccountController implements vscode.Disposable {
       settingsJsonText,
     });
     for (const warning of this.overrideWarnings) {
-      this.log(`aviso: ${warning}`);
+      this.log(`warning: ${warning}`);
     }
     this.render();
   }
@@ -397,14 +493,14 @@ export class AccountController implements vscode.Disposable {
         log: (message) => this.log(message),
       });
       for (const warning of report.warnings) {
-        this.log(`aviso: ${warning}`);
+        this.log(`warning: ${warning}`);
       }
       if (interactive) {
         const summary = report.skipped
-          ? `Perfil «${this.profile.name}»: preparação adiada.`
-          : `Perfil «${this.profile.name}»: ${report.junctionsCreated.length} junction(s) nova(s), ${report.junctionsKept} mantida(s), ${report.synced.length} arquivo(s) sincronizado(s)${report.seeded ? ', .claude.json semeado' : ''}.`;
+          ? `Profile "${this.profile.name}": preparation postponed.`
+          : `Profile "${this.profile.name}": ${report.junctionsCreated.length} new junction(s), ${report.junctionsKept} kept, ${report.synced.length} file(s) synced${report.seeded ? ', .claude.json seeded' : ''}.`;
         if (report.warnings.length) {
-          void vscode.window.showWarningMessage(`${summary} Avisos: ${report.warnings.join('; ')}`);
+          void vscode.window.showWarningMessage(`${summary} Warnings: ${report.warnings.join('; ')}`);
         } else {
           void vscode.window.showInformationMessage(summary);
         }
@@ -414,15 +510,15 @@ export class AccountController implements vscode.Disposable {
     try {
       if (interactive) {
         return await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: `Preparando o diretório do perfil «${this.profile.name}»` },
+          { location: vscode.ProgressLocation.Notification, title: `Preparing the directory of profile "${this.profile.name}"` },
           run,
         );
       }
       return await run();
     } catch (error) {
-      this.log(`falha ao preparar ${this.paths.configDir}: ${(error as Error).stack ?? String(error)}`);
+      this.log(`failed to prepare ${this.paths.configDir}: ${(error as Error).stack ?? String(error)}`);
       if (interactive) {
-        void vscode.window.showErrorMessage(`Não foi possível preparar o diretório do perfil «${this.profile.name}»: ${(error as Error).message}`);
+        void vscode.window.showErrorMessage(`Could not prepare the directory of profile "${this.profile.name}": ${(error as Error).message}`);
       }
       return false;
     } finally {
@@ -431,29 +527,45 @@ export class AccountController implements vscode.Disposable {
   }
 
   private async onSettingsChanged(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     this.settings = readSettings(this.deps.home);
     const updated = findProfile(this.settings.profiles, this.profile.name);
     if (updated && updated.configDir !== this.profile.configDir) {
-      this.log(`definição do perfil «${this.profile.name}» mudou; reaplicando`);
+      this.log(`definition of profile "${this.profile.name}" changed, reapplying`);
       this.applyProfile(updated);
       this.pendingReload = true;
       await this.ensureProfileDir(false);
     } else if (updated) {
       this.profile = updated;
       this.applyTerminalEnv();
+    } else {
+      const resolution = resolveActiveProfile(this.settings.profiles, this.context.workspaceState.get<string>(STORED_PROFILE_KEY), this.settings.defaultProfile);
+      const next = resolution?.profile ?? FALLBACK_PROFILE;
+      const directoryChanged = next.configDir !== this.profile.configDir;
+      this.log(`profile "${this.profile.name}" is no longer configured, this window now uses "${next.name}"`);
+      this.applyProfile(next);
+      if (directoryChanged) {
+        this.pendingReload = true;
+        await this.ensureProfileDir(false);
+      }
     }
     this.startTimer();
     await this.checkOverrides();
-    await this.refresh('configuração alterada');
+    await this.refresh('settings changed');
   }
 
   private async onFocus(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     const now = this.deps.now();
     if (!this.paths.isDefault && now - this.lastSyncAt > FOCUS_SYNC_AFTER_MS) {
       await this.ensureProfileDir(false);
     }
     if (now - this.lastRefreshAt > FOCUS_REFRESH_AFTER_MS) {
-      await this.refresh('janela em foco');
+      await this.refresh('window focused');
     }
   }
 
@@ -462,11 +574,11 @@ export class AccountController implements vscode.Disposable {
       return;
     }
     this.loginHintShown = true;
-    const who = this.profile.email ? ` com ${this.profile.email}` : '';
+    const who = this.profile.email ? ` with ${this.profile.email}` : '';
     void vscode.window
-      .showWarningMessage(`O perfil «${this.profile.name}» ainda não tem login nesta máquina. Abra o Claude Code nesta janela e entre${who}.`, 'Abrir Claude Code')
+      .showWarningMessage(`Profile "${this.profile.name}" is not signed in on this machine yet. Open Claude Code in this window and sign in${who}.`, 'Open Claude Code')
       .then((choice) => {
-        if (choice === 'Abrir Claude Code') {
+        if (choice === 'Open Claude Code') {
           void this.openClaude();
         }
       });
@@ -476,8 +588,8 @@ export class AccountController implements vscode.Disposable {
     try {
       await vscode.commands.executeCommand(OPEN_CLAUDE_COMMAND);
     } catch (error) {
-      this.log(`não foi possível abrir o Claude Code: ${(error as Error).message}`);
-      void vscode.window.showWarningMessage('Não encontrei o comando do Claude Code. Abra o painel do Claude Code manualmente.');
+      this.log(`could not open Claude Code: ${(error as Error).message}`);
+      void vscode.window.showWarningMessage('The Claude Code command was not found. Open the Claude Code panel manually.');
     }
   }
 
@@ -486,13 +598,13 @@ export class AccountController implements vscode.Disposable {
     return profiles.map((profile) => ({
       label: `${profile.name === this.profile.name ? '$(check)' : '$(account)'} ${profile.name}`,
       description: profile.email,
-      detail: `${profilePaths(profile, this.inherited, this.deps.home).configDir}${profile.configDir ? '' : ' (padrão)'}`,
+      detail: `${profilePaths(profile, this.inherited, this.deps.home).configDir}${profile.configDir ? '' : ' (default)'}`,
       run: () => this.switchTo(profile),
     }));
   }
 
   private async showSwitchPicker(): Promise<void> {
-    const picked = await vscode.window.showQuickPick(this.profileItems(), { placeHolder: 'Perfil do Claude Code para esta janela', title: 'Trocar perfil' });
+    const picked = await vscode.window.showQuickPick(this.profileItems(), { placeHolder: 'Claude Code profile for this window', title: 'Switch Profile' });
     await picked?.run?.();
   }
 
@@ -500,18 +612,20 @@ export class AccountController implements vscode.Disposable {
     const items: MenuItem[] = [
       ...this.profileItems(),
       { label: '', kind: vscode.QuickPickItemKind.Separator },
-      { label: '$(sync) Atualizar uso agora', run: () => this.refresh('pedido manual', true) },
-      { label: '$(comment-discussion) Abrir o Claude Code', run: () => this.openClaude() },
+      { label: '$(person-add) Add account', run: () => this.addAccount() },
+      { label: '$(sync) Refresh usage now', run: () => this.refresh('manual request', true) },
+      { label: '$(comment-discussion) Open Claude Code', run: () => this.openClaude() },
     ];
     if (!this.paths.isDefault) {
-      items.push({ label: '$(tools) Preparar ou reparar o diretório do perfil', run: () => this.ensureProfileDir(true) });
+      items.push({ label: '$(tools) Prepare or repair the profile directory', run: () => this.ensureProfileDir(true) });
     }
     items.push(
-      { label: '$(debug-restart) Recarregar a janela', run: () => vscode.commands.executeCommand('workbench.action.reloadWindow') },
-      { label: '$(output) Mostrar logs', run: () => this.output.show(true) },
-      { label: '$(settings-gear) Configurações do Claude Account', run: () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:muryelca.claude-account-switcher') },
+      { label: '$(debug-restart) Reload window', run: () => vscode.commands.executeCommand('workbench.action.reloadWindow') },
+      { label: '$(output) Show logs', run: () => this.output.show(true) },
+      { label: '$(wand) Set up accounts again', run: () => this.runSetup() },
+      { label: '$(settings-gear) Settings', run: () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXTENSION_ID}`) },
     );
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: `Perfil ativo: ${this.profile.name}`, title: 'Claude Account' });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: `Active profile: ${this.profile.name}`, title: 'DJ Claude Account Switcher' });
     await picked?.run?.();
   }
 
@@ -519,16 +633,18 @@ export class AccountController implements vscode.Disposable {
     this.disposables.push(
       vscode.commands.registerCommand('claudeAccount.menu', () => this.showMenu()),
       vscode.commands.registerCommand('claudeAccount.switch', () => this.showSwitchPicker()),
-      vscode.commands.registerCommand('claudeAccount.refreshUsage', () => this.refresh('comando', true)),
+      vscode.commands.registerCommand('claudeAccount.refreshUsage', () => this.refresh('command', true)),
       vscode.commands.registerCommand('claudeAccount.repairProfile', async () => {
         if (this.paths.isDefault) {
-          void vscode.window.showInformationMessage(`O perfil «${this.profile.name}» usa o diretório padrão do Claude Code; não há nada para preparar.`);
+          void vscode.window.showInformationMessage(`Profile "${this.profile.name}" uses the default Claude Code directory, there is nothing to prepare.`);
           return;
         }
         await this.ensureProfileDir(true);
-        await this.refresh('reparo');
+        await this.refresh('repair');
       }),
       vscode.commands.registerCommand('claudeAccount.showLogs', () => this.output.show(true)),
+      vscode.commands.registerCommand('claudeAccount.setup', () => this.runSetup()),
+      vscode.commands.registerCommand('claudeAccount.addAccount', () => this.addAccount()),
     );
   }
 }

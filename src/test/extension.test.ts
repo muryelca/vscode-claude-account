@@ -103,10 +103,10 @@ test('switching persists the choice, prepares the profile directory and offers a
     assert.equal((await fs.lstat(path.join(personalDir, 'projects'))).isSymbolicLink(), true);
     const seeded = JSON.parse(await fs.readFile(path.join(personalDir, '.claude.json'), 'utf8'));
     assert.equal(seeded.oauthAccount, undefined);
-    assert.ok(events.messages.some((message) => message.includes('Perfil «Pessoal» ativo nesta janela')));
-    assert.ok(events.warnings.some((message) => message.includes('ainda não tem login')));
-    assert.ok(events.statusTexts.at(-1)?.includes('sem login'));
-    assert.ok(events.statusTexts.at(-1)?.includes('recarregar'));
+    assert.ok(events.messages.some((message) => message.includes('Profile "Pessoal" is active in this window')));
+    assert.ok(events.warnings.some((message) => message.includes('is not signed in on this machine yet')));
+    assert.ok(events.statusTexts.at(-1)?.includes('signed out'));
+    assert.ok(events.statusTexts.at(-1)?.includes('reload'));
 
     events.quickPickAnswers.push((items) => items.find((item) => item.label.includes('Empresa')));
     await switchCommand();
@@ -118,6 +118,49 @@ test('switching persists the choice, prepares the profile directory and offers a
   } finally {
     controller.dispose();
     context.workspaceState.store.clear();
+  }
+});
+
+test('a fresh install prompts for setup, detects the signed-in account and saves the names the user picks', async () => {
+  const savedProfiles = config['claudeAccount.profiles'];
+  const savedDefault = config['claudeAccount.defaultProfile'];
+  config['claudeAccount.profiles'] = undefined;
+  config['claudeAccount.defaultProfile'] = undefined;
+  const env: NodeJS.ProcessEnv = {};
+  const controller = extension.createAccountController(context as never, makeDeps(env).deps);
+  try {
+    assert.equal(controller.currentProfileName(), 'Default');
+    assert.equal(controller.needsSetup(), true);
+    controller.start();
+    await settle();
+    assert.ok(events.messages.some((message) => message.includes('set up your Claude accounts')));
+
+    events.quickPickAnswers.push(
+      (items) => (items as Array<{ label: string; picked?: boolean }>).filter((item) => item.picked),
+      (items) => (items as Array<{ label: string; id?: string }>).find((item) => item.id === 'add'),
+      (items) => (items as Array<{ label: string; id?: string }>).find((item) => item.id === 'done'),
+      (items) => items.find((item) => item.label === 'Empresa'),
+    );
+    events.inputBoxAnswers.push('Empresa', 'Pessoal');
+    events.messageAnswers.push('Later');
+    await controller.runSetup();
+    await settle();
+
+    assert.match(events.inputBoxPrompts[0], /empresa@example\.com/);
+    assert.deepEqual(config['claudeAccount.profiles'], [
+      { name: 'Empresa', email: 'empresa@example.com' },
+      { name: 'Pessoal', configDir: '~/.claude-profiles/pessoal' },
+    ]);
+    assert.equal(config['claudeAccount.defaultProfile'], 'Empresa');
+    assert.equal(context.globalState.store.get('claudeAccount.setupDismissed'), true);
+    assert.equal(controller.needsSetup(), false);
+    assert.equal(controller.currentProfileName(), 'Empresa');
+    assert.ok(events.messages.some((message) => message.includes('2 account(s) set up') && message.includes('"Pessoal"')));
+  } finally {
+    controller.dispose();
+    config['claudeAccount.profiles'] = savedProfiles;
+    config['claudeAccount.defaultProfile'] = savedDefault;
+    context.globalState.store.clear();
   }
 });
 

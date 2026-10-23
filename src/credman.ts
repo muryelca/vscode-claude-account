@@ -47,19 +47,19 @@ export const READ_SCRIPT = [
 function describeExecError(error: NodeJS.ErrnoException & { signal?: string | null; killed?: boolean }, stderr: string): string {
   const parts: string[] = [];
   if (error.code !== undefined) {
-    parts.push(`código ${String(error.code)}`);
+    parts.push(`code ${String(error.code)}`);
   }
   if (error.signal) {
-    parts.push(`sinal ${error.signal}`);
+    parts.push(`signal ${error.signal}`);
   }
   if (error.killed) {
-    parts.push('tempo esgotado');
+    parts.push('timed out');
   }
   const firstLine = stderr.split(/\r?\n/).find((line) => line.trim() !== '');
   if (firstLine) {
     parts.push(firstLine.trim().slice(0, 160));
   }
-  return parts.length ? parts.join(', ') : 'falha desconhecida';
+  return parts.length ? parts.join(', ') : 'unknown failure';
 }
 
 export const runPowerShell: PowerShellRunner = (script, env) =>
@@ -144,16 +144,16 @@ export async function readCredentialManager(service: string, run: PowerShellRunn
     if (manifestBlob) {
       const manifest = parseManifest(decodeTextBlob(manifestBlob));
       if (!manifest) {
-        return { kind: 'error', source: 'credential-manager', message: 'manifesto das credenciais em partes é inválido' };
+        return { kind: 'error', source: 'credential-manager', message: 'chunked credentials manifest is invalid' };
       }
       const chunkTarget = (index: number) => (serviceManifest ? `${service}#${index}/${user}` : `${service}/${user}#${index}`);
       const chunks = await readTargets(Array.from({ length: manifest.n }, (_, index) => chunkTarget(index)), run);
       if (chunks.some((chunk) => chunk === undefined)) {
-        return { kind: 'error', source: 'credential-manager', message: 'faltam partes das credenciais no Credential Manager' };
+        return { kind: 'error', source: 'credential-manager', message: 'chunks of the credentials are missing in Credential Manager' };
       }
       const joined = chunks.map((chunk) => decodeTextBlob(chunk as Buffer)).join('');
       if (manifest.l !== undefined && joined.length !== manifest.l) {
-        return { kind: 'error', source: 'credential-manager', message: 'partes das credenciais inconsistentes' };
+        return { kind: 'error', source: 'credential-manager', message: 'chunked credentials are inconsistent' };
       }
       return stateFromText(Buffer.from(joined, 'base64').toString('utf8'), 'credential-manager', now);
     }

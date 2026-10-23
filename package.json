@@ -1,27 +1,52 @@
 {
-  "name": "claude-account-switcher",
-  "displayName": "Claude Account Switcher",
-  "description": "Troca a conta do Claude Code por janela do VS Code e mostra a conta ativa e o uso na barra de status.",
-  "version": "0.1.0",
+  "name": "dj-claude-account-switcher",
+  "displayName": "DJ Claude Account Switcher",
+  "description": "Switch the Claude Code account per VS Code window and see the active account and usage limits in the status bar.",
+  "version": "1.0.0",
   "publisher": "muryelca",
+  "author": {
+    "name": "Muryel Cabral"
+  },
   "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/muryelca/vscode-claude-account"
   },
+  "bugs": {
+    "url": "https://github.com/muryelca/vscode-claude-account/issues"
+  },
+  "homepage": "https://github.com/muryelca/vscode-claude-account#readme",
   "keywords": [
     "claude",
     "claude code",
+    "anthropic",
     "account",
+    "switch account",
+    "multiple accounts",
     "profile",
-    "usage"
+    "usage",
+    "rate limit",
+    "status bar"
   ],
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "pricing": "Free",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
   "activationEvents": [
     "*",
     "onWebviewPanel:claudeVSCodePanel",
@@ -33,33 +58,48 @@
   "contributes": {
     "commands": [
       {
+        "command": "claudeAccount.setup",
+        "title": "Set Up Accounts",
+        "category": "DJ Claude Account"
+      },
+      {
+        "command": "claudeAccount.addAccount",
+        "title": "Add Account",
+        "category": "DJ Claude Account"
+      },
+      {
         "command": "claudeAccount.menu",
-        "title": "Claude Account: Menu da conta"
+        "title": "Account Menu",
+        "category": "DJ Claude Account"
       },
       {
         "command": "claudeAccount.switch",
-        "title": "Claude Account: Trocar perfil desta janela"
+        "title": "Switch Profile for This Window",
+        "category": "DJ Claude Account"
       },
       {
         "command": "claudeAccount.refreshUsage",
-        "title": "Claude Account: Atualizar uso"
+        "title": "Refresh Usage",
+        "category": "DJ Claude Account"
       },
       {
         "command": "claudeAccount.repairProfile",
-        "title": "Claude Account: Preparar ou reparar o diretório do perfil"
+        "title": "Prepare or Repair Profile Directory",
+        "category": "DJ Claude Account"
       },
       {
         "command": "claudeAccount.showLogs",
-        "title": "Claude Account: Mostrar logs"
+        "title": "Show Logs",
+        "category": "DJ Claude Account"
       }
     ],
     "configuration": {
-      "title": "Claude Account",
+      "title": "DJ Claude Account Switcher",
       "properties": {
         "claudeAccount.profiles": {
           "type": "array",
           "scope": "application",
-          "markdownDescription": "Perfis disponíveis. `configDir` vazio usa o diretório padrão do Claude Code (`~/.claude`). Um perfil com `configDir` próprio guarda o seu login e compartilha skills, agentes, plugins, memória e histórico com o padrão por junctions.",
+          "markdownDescription": "Your Claude Code accounts, one profile each. Filled in by the **Set Up Accounts** command, which detects the accounts already signed in on this computer. An empty `configDir` uses the default Claude Code directory (`~/.claude`). A profile with its own `configDir` keeps its own sign-in and shares skills, agents, plugins, memory and history with the default directory through junctions (symbolic links outside Windows).",
           "items": {
             "type": "object",
             "required": [
@@ -68,39 +108,31 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "Nome mostrado na barra de status."
+                "description": "Name shown in the status bar."
               },
               "email": {
                 "type": "string",
-                "description": "E-mail esperado da conta. Usado para avisar quando o login no diretório é de outra conta."
+                "description": "Expected account email. Used to warn when the directory is signed in with a different account."
               },
               "configDir": {
                 "type": "string",
-                "description": "Diretório de configuração do Claude Code para este perfil (CLAUDE_CONFIG_DIR). Aceita ~ para a pasta do usuário. Vazio usa ~/.claude."
+                "description": "Claude Code configuration directory for this profile (CLAUDE_CONFIG_DIR). Accepts ~ for the home folder. Empty uses ~/.claude."
               }
             }
           },
-          "default": [
-            {
-              "name": "Empresa"
-            },
-            {
-              "name": "Pessoal",
-              "configDir": "~/.claude-profiles/pessoal"
-            }
-          ]
+          "default": []
         },
         "claudeAccount.defaultProfile": {
           "type": "string",
           "scope": "application",
-          "default": "Empresa",
-          "description": "Perfil usado por uma janela que ainda não escolheu o seu."
+          "default": "",
+          "description": "Profile used by a window that has not picked one yet. Empty uses the first profile."
         },
         "claudeAccount.usage.liveQueries": {
           "type": "boolean",
           "scope": "application",
           "default": true,
-          "markdownDescription": "Consulta o uso ao vivo em `api.anthropic.com/api/oauth/usage` com o token do perfil quando o cache do próprio Claude Code está velho. Desligado, a barra mostra só o que o Claude Code guardou em `.claude.json`."
+          "markdownDescription": "Fetch live usage from `api.anthropic.com/api/oauth/usage` with the profile token when the Claude Code cache is stale. When off, the status bar shows only what Claude Code stored in `.claude.json`."
         },
         "claudeAccount.usage.liveMinIntervalMinutes": {
           "type": "number",
@@ -108,7 +140,7 @@
           "default": 5,
           "minimum": 2,
           "maximum": 120,
-          "description": "Intervalo mínimo, em minutos, entre consultas de uso ao vivo de um mesmo perfil (compartilhado entre todas as janelas)."
+          "description": "Minimum interval, in minutes, between live usage requests for the same profile (shared across all windows)."
         },
         "claudeAccount.usage.refreshIntervalSeconds": {
           "type": "number",
@@ -116,7 +148,7 @@
           "default": 60,
           "minimum": 30,
           "maximum": 3600,
-          "description": "Intervalo, em segundos, entre leituras locais do cache de uso e das credenciais do perfil."
+          "description": "Interval, in seconds, between local reads of the usage cache and the profile credentials."
         },
         "claudeAccount.usage.warnAtPercent": {
           "type": "number",
@@ -124,13 +156,13 @@
           "default": 80,
           "minimum": 1,
           "maximum": 100,
-          "description": "A partir desta porcentagem a barra de status fica em amarelo. Em 100% fica em vermelho."
+          "description": "The status bar turns yellow at this percentage and red at 100%."
         },
         "claudeAccount.applyToTerminals": {
           "type": "boolean",
           "scope": "application",
           "default": true,
-          "description": "Aplica o perfil da janela aos terminais integrados criados depois da escolha (o comando claude no terminal usa a mesma conta). Terminais já abertos precisam ser reiniciados."
+          "description": "Apply the window profile to integrated terminals created after the selection, so the claude command in the terminal uses the same account. Terminals that are already open must be restarted."
         },
         "claudeAccount.profileDir.syncFiles": {
           "type": "array",
@@ -143,7 +175,7 @@
             "CLAUDE.md",
             "skills-lock.json"
           ],
-          "description": "Arquivos de ~/.claude mantidos iguais em cada perfil (o mais recente vence, com cópia .bak do substituído). Credenciais e .claude.json nunca entram."
+          "description": "Files from ~/.claude kept identical in every profile (the newest copy wins and the replaced one is saved as .bak). Credentials and .claude.json are never synced."
         }
       }
     }
@@ -151,9 +183,9 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+    "test": "npm run compile && node --test --test-timeout=20000 \"out/test/**/*.test.js\"",
     "prepackage": "node scripts/bump-version.mjs",
-    "package": "vsce package",
+    "package": "vsce package --allow-star-activation",
     "install-local": "node scripts/install-local.mjs"
   },
   "devDependencies": {

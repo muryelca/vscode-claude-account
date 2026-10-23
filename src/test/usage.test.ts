@@ -80,8 +80,8 @@ test('fetchUsage sends the bearer token with the oauth beta header and categoriz
   assert.equal(calls.length, 1);
 });
 
-test('usageFailureLabel speaks pt-BR without echoing internals', () => {
-  assert.equal(usageFailureLabel('unauthorized', 403), 'token recusado (403)');
-  assert.equal(usageFailureLabel('rate-limited'), 'limite de consultas de uso atingido (429)');
-  assert.equal(usageFailureLabel('network'), 'sem conexão com a API do Claude');
+test('usageFailureLabel speaks plain English without echoing internals', () => {
+  assert.equal(usageFailureLabel('unauthorized', 403), 'token rejected (403)');
+  assert.equal(usageFailureLabel('rate-limited'), 'usage rate limit reached (429)');
+  assert.equal(usageFailureLabel('network'), 'cannot reach the Claude API');
 });

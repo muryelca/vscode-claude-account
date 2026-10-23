@@ -161,7 +161,7 @@ export async function syncFileByMtime(
   if (baseStat && !profileStat) {
     const content = await fs.readFile(baseFile);
     if (!contentLooksValid(name, content)) {
-      warn(`${name}: cópia de origem vazia ou inválida; não copiado`);
+      warn(`${name}: the source copy is empty or invalid, not copied`);
       return 'skipped';
     }
     await replaceFile(baseFile, profileFile, content, baseStat.mtime);
@@ -181,16 +181,16 @@ export async function syncFileByMtime(
   const source = baseIsNewer ? { file: baseFile, stat: baseStat, content: baseContent } : { file: profileFile, stat: profileStat, content: profileContent };
   const target = baseIsNewer ? { file: profileFile, stat: profileStat } : { file: baseFile, stat: baseStat };
   if (source.stat.mtimeMs > now + FUTURE_MTIME_TOLERANCE_MS) {
-    warn(`${name}: a cópia mais nova tem data no futuro; não sincronizado`);
+    warn(`${name}: the newer copy has a timestamp in the future, not synced`);
     return 'skipped';
   }
   if (!contentLooksValid(name, source.content)) {
-    warn(`${name}: a cópia mais nova está vazia ou inválida; não sincronizado`);
+    warn(`${name}: the newer copy is empty or invalid, not synced`);
     return 'skipped';
   }
   const targetNow = await statOrNull(target.file);
   if (!targetNow || Math.abs(targetNow.mtimeMs - target.stat.mtimeMs) >= MTIME_TOLERANCE_MS) {
-    warn(`${name}: o arquivo mudou durante a sincronização; tente de novo`);
+    warn(`${name}: the file changed during sync, try again`);
     return 'skipped';
   }
   await replaceFile(source.file, target.file, source.content, source.stat.mtime);
@@ -209,16 +209,16 @@ async function ensureJunction(target: string, link: string, platform: NodeJS.Pla
     if (samePath(current, target, platform)) {
       return { created: false };
     }
-    log(`junction ${path.basename(link)} apontava para ${current}; recriando para ${target}`);
+    log(`junction ${path.basename(link)} pointed to ${current}, recreating it for ${target}`);
     await removeLink(link, platform);
   } else if (existing?.isDirectory()) {
     const entries = await fs.readdir(link);
     if (entries.length > 0) {
-      return { created: false, warning: `${path.basename(link)}: é uma pasta real com conteúdo no perfil; não foi substituída por junction` };
+      return { created: false, warning: `${path.basename(link)}: a real folder with content exists in the profile, not replaced by a junction` };
     }
     await fs.rmdir(link);
   } else if (existing) {
-    return { created: false, warning: `${path.basename(link)}: existe um arquivo com esse nome no perfil` };
+    return { created: false, warning: `${path.basename(link)}: a file with this name exists in the profile` };
   }
   await fs.symlink(target, link, 'junction');
   return { created: true };
@@ -266,22 +266,22 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
   let seeded = false;
 
   if (overlaps(options.baseDir, options.profileDir, platform)) {
-    warnings.push(`o diretório do perfil (${options.profileDir}) coincide ou está dentro de ${options.baseDir}; nada foi feito`);
+    warnings.push(`the profile directory (${options.profileDir}) overlaps ${options.baseDir}, nothing was done`);
     return { createdDir: false, junctionsCreated, junctionsKept, seeded, synced, warnings, skipped: true };
   }
 
   const existedBefore = (await statOrNull(options.profileDir)) !== null;
   await fs.mkdir(options.profileDir, { recursive: true });
   if (!(await acquirePrepareLock(options.profileDir, now()))) {
-    warnings.push('outra janela está preparando este perfil agora; tente de novo em instantes');
+    warnings.push('another window is preparing this profile right now, try again in a moment');
     return { createdDir: !existedBefore, junctionsCreated, junctionsKept, seeded, synced, warnings, skipped: true };
   }
-  options.log(`${existedBefore ? 'verificando' : 'criando'} diretório do perfil ${options.profileDir}`);
+  options.log(`${existedBefore ? 'checking' : 'creating'} profile directory ${options.profileDir}`);
 
   try {
     const baseStat = await statOrNull(options.baseDir);
     if (!baseStat?.isDirectory()) {
-      warnings.push(`diretório base ${options.baseDir} não existe; nada para compartilhar`);
+      warnings.push(`base directory ${options.baseDir} does not exist, nothing to share`);
       return { createdDir: !existedBefore, junctionsCreated, junctionsKept, seeded, synced, warnings, skipped: false };
     }
 
@@ -308,7 +308,7 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
         continue;
       }
       if (overlaps(target, options.profileDir, platform)) {
-        warnings.push(`${name}: o alvo (${target}) contém ou está dentro do perfil; ignorado`);
+        warnings.push(`${name}: the target (${target}) overlaps the profile, skipped`);
         continue;
       }
       try {
@@ -321,7 +321,7 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
           junctionsKept += 1;
         }
       } catch (error) {
-        warnings.push(`${name}: falha ao criar junction: ${(error as Error).message}`);
+        warnings.push(`${name}: failed to create the junction: ${(error as Error).message}`);
       }
     }
 
@@ -333,16 +333,16 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
         if (content) {
           await fs.writeFile(profileConfig, content, 'utf8');
           seeded = true;
-          options.log(`semeado ${profileConfig} a partir de ${options.baseConfigFile} sem a conta, as chaves de API e os caches`);
+          options.log(`seeded ${profileConfig} from ${options.baseConfigFile} without the account, API keys and caches`);
         } else {
-          warnings.push(`${options.baseConfigFile} não pôde ser lido como JSON; perfil começa sem .claude.json`);
+          warnings.push(`${options.baseConfigFile} is not valid JSON, the profile starts without .claude.json`);
         }
       }
     }
 
     for (const name of options.syncFiles) {
       if (!isSyncNameAllowed(name)) {
-        warnings.push(`${name}: nome não permitido na sincronização; ignorado`);
+        warnings.push(`${name}: name not allowed for sync, skipped`);
         continue;
       }
       try {
@@ -351,7 +351,7 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
           synced.push(`${name} (${direction})`);
         }
       } catch (error) {
-        warnings.push(`${name}: falha ao sincronizar: ${(error as Error).message}`);
+        warnings.push(`${name}: failed to sync: ${(error as Error).message}`);
       }
     }
   } finally {
@@ -359,7 +359,7 @@ export async function prepareProfileDir(options: PrepareOptions): Promise<Prepar
   }
 
   options.log(
-    `perfil pronto: ${junctionsCreated.length} junction(s) nova(s), ${junctionsKept} mantida(s), ${synced.length} arquivo(s) sincronizado(s), ${warnings.length} aviso(s)`,
+    `profile ready: ${junctionsCreated.length} new junction(s), ${junctionsKept} kept, ${synced.length} file(s) synced, ${warnings.length} warning(s)`,
   );
   return { createdDir: !existedBefore, junctionsCreated, junctionsKept, seeded, synced, warnings, skipped: false };
 }

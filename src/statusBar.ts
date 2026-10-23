@@ -8,7 +8,7 @@ export class AccountStatusBar implements vscode.Disposable {
 
   constructor() {
     this.item = vscode.window.createStatusBarItem('claudeAccount.status', vscode.StatusBarAlignment.Right, 150);
-    this.item.name = 'Claude Account';
+    this.item.name = 'DJ Claude Account Switcher';
     this.item.command = 'claudeAccount.menu';
     this.item.text = '$(account) Claude';
     this.item.show();
